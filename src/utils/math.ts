@@ -122,7 +122,7 @@ export function answersEqual(
 }
 
 export function extractUnit(text: string): { value: string; unit: string } | null {
-  const match = text.match(/^(-?\d+(?:\.\d+)?(?:\/\d+)?)\s*([a-zA-Z\u4e00-\u9fa5]+)?$/);
+  const match = text.match(/^(-?\d+(?:\.\d+)?(?:\/\d+)?)\s*([a-zA-Z\u4e00-\u9fa5°²³]+)?$/);
   if (match) {
     return {
       value: match[1],
@@ -130,4 +130,97 @@ export function extractUnit(text: string): { value: string; unit: string } | nul
     };
   }
   return null;
+}
+
+const unitAliases: { [key: string]: string } = {
+  'cm': 'cm',
+  'CM': 'cm',
+  '厘米': 'cm',
+  '公分': 'cm',
+  'm': 'm',
+  'M': 'm',
+  '米': 'm',
+  'dm': 'dm',
+  'DM': 'dm',
+  '分米': 'dm',
+  'mm': 'mm',
+  'MM': 'mm',
+  '毫米': 'mm',
+  'km': 'km',
+  'KM': 'km',
+  '千米': 'km',
+  '公里': 'km',
+  'cm²': 'cm²',
+  'CM²': 'cm²',
+  'cm2': 'cm²',
+  'CM2': 'cm²',
+  '平方厘米': 'cm²',
+  '公分²': 'cm²',
+  'm²': 'm²',
+  'M²': 'm²',
+  'm2': 'm²',
+  'M2': 'm²',
+  '平方米': 'm²',
+  '平米': 'm²',
+  'dm²': 'dm²',
+  'DM²': 'dm²',
+  'dm2': 'dm²',
+  'DM2': 'dm²',
+  '平方分米': 'dm²',
+  'mm²': 'mm²',
+  'MM²': 'mm²',
+  'mm2': 'mm²',
+  'MM2': 'mm²',
+  '平方毫米': 'mm²',
+  'km²': 'km²',
+  'KM²': 'km²',
+  'km2': 'km²',
+  'KM2': 'km²',
+  '平方千米': 'km²',
+  '平方公里': 'km²',
+  'cm³': 'cm³',
+  'CM³': 'cm³',
+  'cm3': 'cm³',
+  'CM3': 'cm³',
+  '立方厘米': 'cm³',
+  'm³': 'm³',
+  'M³': 'm³',
+  'm3': 'm³',
+  'M3': 'm³',
+  '立方米': 'm³',
+  '°': '°',
+  '度': '°',
+  '°C': '°C',
+  '摄氏度': '°C',
+  '%': '%',
+  'percent': '%',
+  '百分比': '%'
+};
+
+export function normalizeUnit(unit: string): string {
+  const trimmed = unit.trim();
+  if (!trimmed) return '';
+  return unitAliases[trimmed] || trimmed;
+}
+
+export function unitsEqual(unit1: string, unit2: string): boolean {
+  const norm1 = normalizeUnit(unit1);
+  const norm2 = normalizeUnit(unit2);
+  if (!norm1 || !norm2) return norm1 === norm2;
+  return norm1 === norm2;
+}
+
+export function formatUnit(unit: string): string {
+  const normalized = normalizeUnit(unit);
+  const displayMap: { [key: string]: string } = {
+    'cm²': 'cm²',
+    'm²': 'm²',
+    'dm²': 'dm²',
+    'mm²': 'mm²',
+    'km²': 'km²',
+    'cm³': 'cm³',
+    'm³': 'm³',
+    '°': '°'
+  };
+  return displayMap[normalized] || normalized;
 }

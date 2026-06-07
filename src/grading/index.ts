@@ -12,7 +12,8 @@ import {
   parseFraction,
   extractUnit,
   simplifyFraction,
-  fractionToNumber
+  fractionToNumber,
+  unitsEqual
 } from '../utils/math';
 
 function isFractionAnswer(answer: number | Fraction | string): answer is Fraction {
@@ -163,7 +164,11 @@ function gradeAnswer(
   let equivalentFraction: boolean | undefined = undefined;
 
   if (checkUnit && correctUnit) {
-    unitMatch = userUnit === correctUnit;
+    if (userUnit === undefined) {
+      unitMatch = false;
+    } else {
+      unitMatch = unitsEqual(userUnit, correctUnit);
+    }
   }
 
   if (isFractionAnswer(userAnswer) && isFractionAnswer(correctAnswer)) {

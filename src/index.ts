@@ -6,11 +6,11 @@ import { hintModule } from './hint';
 import { recordModule } from './record';
 
 export * from './types';
-export { createQuestions } from './question';
+export { createQuestions, createMixedQuestions, createAdaptiveQuestions } from './question';
 export { renderQuestion, renderQuestionPlain } from './render';
 export { gradingModule } from './grading';
 export { hintModule } from './hint';
-export { recordModule, createExercise } from './record';
+export { recordModule, createExercise, getRecommendation } from './record';
 export { createSeededRandom } from './utils/random';
 export {
   gcd,
@@ -23,8 +23,12 @@ export {
   parseFraction,
   parseAnswer,
   answersEqual,
-  extractUnit
+  extractUnit,
+  normalizeUnit,
+  unitsEqual,
+  formatUnit
 } from './utils/math';
+export { getAdaptiveRecommendation, createAdaptiveExercise } from './adaptive';
 
 export const mathExerciseSDK: MathExerciseSDK = {
   question: questionModule,

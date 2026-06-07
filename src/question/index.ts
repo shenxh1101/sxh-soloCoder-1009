@@ -1,4 +1,6 @@
-import type { Question, QuestionConfig, KnowledgePoint } from '../types';
+import type { Question, QuestionConfig, KnowledgePoint, MixedExerciseConfig, QuestionType, Difficulty, AdaptiveConfig } from '../types';
+import { createSeededRandom } from '../utils/random';
+import { createAdaptiveExercise } from '../adaptive';
 import { generateArithmeticQuestion } from './generators/arithmetic';
 import { generateFractionQuestion } from './generators/fraction';
 import { generateEquationQuestion } from './generators/equation';
@@ -75,6 +77,135 @@ export function createQuestions(config: QuestionConfig): Question[] {
   return questions;
 }
 
+function generateQuestionByType(
+  type: QuestionType,
+  difficulty: Difficulty,
+  seed: number,
+  index: number,
+  knowledgePoints?: KnowledgePoint[]
+): Question {
+  const generatorConfig = { difficulty, seed };
+  let question: Question;
+
+  switch (type) {
+    case 'arithmetic':
+      question = generateArithmeticQuestion(generatorConfig, index);
+      break;
+    case 'fraction':
+      question = generateFractionQuestion(generatorConfig, index);
+      break;
+    case 'equation':
+      question = generateEquationQuestion(generatorConfig, index);
+      break;
+    case 'geometry':
+      question = generateGeometryQuestion(generatorConfig, index);
+      break;
+    case 'wordProblem':
+      question = generateWordProblemQuestion(generatorConfig, index);
+      break;
+    default:
+      throw new Error(`Unsupported question type: ${type}`);
+  }
+
+  if (knowledgePoints && knowledgePoints.length > 0) {
+    question.knowledgePoint = knowledgePoints[index % knowledgePoints.length];
+  }
+
+  return question;
+}
+
+function normalizeTypeRatio(
+  typeRatio: { [key in QuestionType]?: number },
+  totalCount: number
+): { type: QuestionType; count: number }[] {
+  const allTypes: QuestionType[] = ['arithmetic', 'fraction', 'equation', 'geometry', 'wordProblem'];
+  const result: { type: QuestionType; count: number }[] = [];
+
+  const totalRatio = Object.values(typeRatio).reduce((sum, r) => sum + (r || 0), 0);
+
+  if (totalRatio === 0) {
+    const perType = Math.floor(totalCount / allTypes.length);
+    const remainder = totalCount % allTypes.length;
+    allTypes.forEach((type, i) => {
+      result.push({
+        type,
+        count: perType + (i < remainder ? 1 : 0)
+      });
+    });
+  } else {
+    let assignedCount = 0;
+    allTypes.forEach((type) => {
+      const ratio = typeRatio[type] || 0;
+      if (ratio > 0) {
+        const count = Math.round((ratio / totalRatio) * totalCount);
+        result.push({ type, count });
+        assignedCount += count;
+      }
+    });
+
+    const diff = totalCount - assignedCount;
+    if (diff !== 0 && result.length > 0) {
+      result[0].count += diff;
+    }
+  }
+
+  return result.filter(r => r.count > 0);
+}
+
+export function createMixedQuestions(config: MixedExerciseConfig): Question[] {
+  const {
+    totalCount,
+    typeRatio = {},
+    difficultyRange = ['easy', 'medium', 'hard'],
+    knowledgePoints,
+    seed,
+    shuffle = true
+  } = config;
+
+  const rng = createSeededRandom(seed);
+  const typeDistribution = normalizeTypeRatio(typeRatio, totalCount);
+
+  const allQuestions: Question[] = [];
+  let questionIndex = 0;
+
+  for (const { type, count } of typeDistribution) {
+    const typeKnowledgePoints = knowledgePoints?.filter(kp =>
+      defaultKnowledgePoints[type]?.some(dkp => dkp.id === kp.id)
+    ) || defaultKnowledgePoints[type];
+
+    for (let i = 0; i < count; i++) {
+      const difficulty = difficultyRange.length > 0
+        ? rng.pick(difficultyRange)
+        : 'medium';
+
+      const questionSeed = seed ? seed + questionIndex * 1000 : undefined;
+      const question = generateQuestionByType(
+        type,
+        difficulty,
+        questionSeed || Date.now(),
+        questionIndex,
+        typeKnowledgePoints
+      );
+
+      allQuestions.push(question);
+      questionIndex++;
+    }
+  }
+
+  if (shuffle) {
+    const shuffleRng = createSeededRandom(seed ? seed + 99999 : undefined);
+    return shuffleRng.shuffle(allQuestions);
+  }
+
+  return allQuestions;
+}
+
+export function createAdaptiveQuestions(config: AdaptiveConfig) {
+  return createAdaptiveExercise(config);
+}
+
 export const questionModule = {
-  create: createQuestions
+  create: createQuestions,
+  createMixed: createMixedQuestions,
+  createAdaptive: createAdaptiveQuestions
 };

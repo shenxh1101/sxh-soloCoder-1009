@@ -43,11 +43,18 @@ function generateGeometryProblem(
   unit: string;
 } {
   const shapes: GeometryData['shape'][] = ['rectangle', 'triangle', 'circle', 'square'];
-  const calculateTypes: GeometryData['calculate'][] = difficulty === 'easy'
-    ? ['area', 'perimeter']
-    : ['area', 'perimeter', 'angle'];
+
+  const supportedCalculations: { [key in GeometryData['shape']]: GeometryData['calculate'][] } = {
+    rectangle: ['area', 'perimeter'],
+    square: ['area', 'perimeter'],
+    circle: ['area', 'perimeter'],
+    triangle: difficulty === 'easy'
+      ? ['area', 'perimeter']
+      : ['area', 'perimeter', 'angle']
+  };
 
   const shape = rng.pick(shapes);
+  const calculateTypes = supportedCalculations[shape];
   const calculate = rng.pick(calculateTypes);
   const unit = rng.pick(unitNames);
   const [min, max] = getMeasurementRange(difficulty);

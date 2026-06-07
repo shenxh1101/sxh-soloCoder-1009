@@ -279,7 +279,7 @@ async function testRecordModule() {
   });
 
   logSubSection('创建练习并记录答题');
-  const exercise = mathExerciseSDK.record.createExercise();
+  const exercise = mathExerciseSDK.record.createExercise(questions);
   console.log('✓ 练习会话已创建');
 
   const answers = [
@@ -292,13 +292,30 @@ async function testRecordModule() {
 
   questions.forEach((q, i) => {
     const ans = answers[i];
+    const firstAttemptCorrect = ans.correct || ans.attempts > 1;
+
+    const attemptList = [];
+    for (let j = 0; j < ans.attempts; j++) {
+      const isLast = j === ans.attempts - 1;
+      const isCorrect = isLast && ans.correct;
+      attemptList.push({
+        userAnswer: isCorrect ? q.correctAnswer : 999 + j,
+        isCorrect,
+        errorType: !isCorrect ? ans.errorType : undefined,
+        timeSpent: ans.time / ans.attempts,
+        timestamp: Date.now() + j * 1000
+      });
+    }
+
     exercise.addAnswer({
       questionId: q.id,
-      userAnswer: ans.correct ? q.correctAnswer : 999,
+      attempts: attemptList,
+      finalAnswer: ans.correct ? q.correctAnswer : 999,
       isCorrect: ans.correct,
-      errorType: ans.errorType,
-      timeSpent: ans.time,
-      attempts: ans.attempts,
+      firstErrorType: !firstAttemptCorrect ? ans.errorType : undefined,
+      totalTimeSpent: ans.time,
+      attemptsCount: ans.attempts,
+      firstAttemptCorrect: ans.correct && ans.attempts === 1,
       timestamp: Date.now()
     });
     console.log(`  记录第${i + 1}题: 正确=${ans.correct}, 耗时=${ans.time/1000}s, 尝试=${ans.attempts}次`);
@@ -315,12 +332,20 @@ async function testRecordModule() {
   console.log(`  总耗时: ${(record.totalTimeSpent / 1000).toFixed(1)}秒`);
   console.log(`  总得分: ${record.totalScore}/${record.maxScore}`);
   console.log(`  最终掌握度: ${record.masteryLevel}%`);
+  console.log(`  总体正确率: ${(record.overallAccuracy * 100).toFixed(1)}%`);
+  console.log(`  首次正确率: ${(record.firstAttemptAccuracy * 100).toFixed(1)}%`);
+  console.log(`  进步率: ${(record.improvementRate * 100).toFixed(1)}%`);
   console.log(`  答题记录数: ${record.answers.length}`);
   console.log(`  错误统计:`, record.errorStats);
 
   logSubSection('单题记录详情');
   record.answers.forEach((ans, i) => {
-    console.log(`  第${i + 1}题: 正确=${ans.isCorrect}, 耗时=${(ans.timeSpent/1000).toFixed(1)}s, 尝试=${ans.attempts}次, 错因=${ans.errorType || '无'}`);
+    console.log(`  第${i + 1}题: 正确=${ans.isCorrect}, 首次正确=${ans.firstAttemptCorrect}, 总耗时=${(ans.totalTimeSpent/1000).toFixed(1)}s, 尝试=${ans.attemptsCount}次, 首错=${ans.firstErrorType || '无'}`);
+  });
+
+  logSubSection('答题过程变化');
+  record.questionProgress.forEach((qp, i) => {
+    console.log(`  第${i + 1}题: 首次=${qp.firstAnswerCorrect ? '✅' : '❌'}, 最终=${qp.finalAnswerCorrect ? '✅' : '❌'}, 进步=${qp.improvement === 'improved' ? '⬆️' : qp.improvement === 'regressed' ? '⬇️' : '➡️'}`);
   });
 }
 
