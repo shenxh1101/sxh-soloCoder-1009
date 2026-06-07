@@ -16,6 +16,35 @@ import { createQuestions } from '../question';
 
 const difficultyOrder: Difficulty[] = ['easy', 'medium', 'hard'];
 
+const knowledgePointToTypeMap: { [kpId: string]: QuestionType } = {
+  'addition-subtraction': 'arithmetic',
+  'multiplication-division': 'arithmetic',
+  'mixed-operation': 'arithmetic',
+  'decimal-calculation': 'arithmetic',
+  'fraction-basic': 'fraction',
+  'fraction-add-sub': 'fraction',
+  'fraction-mul-div': 'fraction',
+  'fraction-mixed': 'fraction',
+  'one-variable': 'equation',
+  'two-variable': 'equation',
+  'word-problem-eq': 'equation',
+  'rectangle-area': 'geometry',
+  'rectangle-perimeter': 'geometry',
+  'circle-area': 'geometry',
+  'circle-circumference': 'geometry',
+  'triangle-area': 'geometry',
+  'area-combined': 'geometry',
+  'word-problem-basic': 'wordProblem',
+  'word-problem-distance': 'wordProblem',
+  'word-problem-work': 'wordProblem',
+  'word-problem-fraction': 'wordProblem',
+  'word-problem-percentage': 'wordProblem'
+};
+
+export function getTypeForKnowledgePoint(kp: KnowledgePoint): QuestionType {
+  return knowledgePointToTypeMap[kp.id] || 'arithmetic';
+}
+
 const errorTypeReviewSuggestions: { [key in ErrorType]: string } = {
   calculationError: '需要加强计算练习，注意进位、借位和小数点',
   unitError: '注意单位的正确使用和换算',
@@ -153,12 +182,20 @@ function generateQuestionPlan(
     analysis.weakKnowledgePoints.forEach(weak => {
       const count = Math.min(perKp, remaining);
       if (count > 0) {
+        const mappedType = getTypeForKnowledgePoint(weak.kp);
+        const typeNames: { [key in QuestionType]: string } = {
+          arithmetic: '口算',
+          fraction: '分数',
+          equation: '方程',
+          geometry: '几何测量',
+          wordProblem: '应用题'
+        };
         plan.push({
-          type: 'arithmetic',
+          type: mappedType,
           difficulty: expectedDifficulty === 'hard' ? 'medium' : 'easy',
           knowledgePoints: [weak.kp],
           reason: 'weakKnowledgePoint',
-          explanation: `知识点「${weak.kp.name}」正确率仅${(weak.accuracy * 100).toFixed(0)}%，需要重点加强`,
+          explanation: `[补弱] 知识点「${weak.kp.name}」正确率仅${(weak.accuracy * 100).toFixed(0)}%，通过${typeNames[mappedType]}题重点加强`,
           count
         });
         remaining -= count;
@@ -185,7 +222,7 @@ function generateQuestionPlan(
           type: weak.type,
           difficulty: expectedDifficulty === 'hard' ? 'medium' : 'easy',
           reason: 'weakQuestionType',
-          explanation: `${typeNames[weak.type]}正确率仅${(weak.accuracy * 100).toFixed(0)}%，需要加强练习`,
+          explanation: `[补弱] ${typeNames[weak.type]}正确率仅${(weak.accuracy * 100).toFixed(0)}%，需要加强练习`,
           count
         });
         remaining -= count;
@@ -209,7 +246,7 @@ function generateQuestionPlan(
           type,
           difficulty: expectedDifficulty === 'hard' ? 'medium' : 'easy',
           reason: 'commonMistake',
-          explanation: `${errorTypeReviewSuggestions[error]}（共${count}次）`,
+          explanation: `[强化] ${errorTypeReviewSuggestions[error]}（共${count}次）`,
           count: qCount
         });
         remaining -= qCount;
@@ -217,7 +254,27 @@ function generateQuestionPlan(
     });
   }
 
-  if (analysis.strongTypes.length > 0 && remaining > 0) {
+  if (analysis.strongKnowledgePoints.length > 0 && remaining > 0) {
+    const reviewCount = Math.min(Math.ceil(targetCount * 0.1), remaining);
+    const strongKp = analysis.strongKnowledgePoints[0];
+    const mappedType = getTypeForKnowledgePoint(strongKp.kp);
+    const typeNames: { [key in QuestionType]: string } = {
+      arithmetic: '口算',
+      fraction: '分数',
+      equation: '方程',
+      geometry: '几何测量',
+      wordProblem: '应用题'
+    };
+    plan.push({
+      type: mappedType,
+      difficulty: analysis.currentDifficulty,
+      knowledgePoints: [strongKp.kp],
+      reason: 'review',
+      explanation: `[复习] 复习已掌握的知识点「${strongKp.kp.name}」，通过${typeNames[mappedType]}题保持记忆`,
+      count: reviewCount
+    });
+    remaining -= reviewCount;
+  } else if (analysis.strongTypes.length > 0 && remaining > 0) {
     const reviewCount = Math.min(Math.ceil(targetCount * 0.1), remaining);
     const strongType = analysis.strongTypes[0];
     const typeNames: { [key in QuestionType]: string } = {
@@ -231,7 +288,7 @@ function generateQuestionPlan(
       type: strongType.type,
       difficulty: analysis.currentDifficulty,
       reason: 'review',
-      explanation: `复习${typeNames[strongType.type]}，巩固已掌握的知识`,
+      explanation: `[复习] 复习${typeNames[strongType.type]}，巩固已掌握的知识`,
       count: reviewCount
     });
     remaining -= reviewCount;
@@ -239,14 +296,34 @@ function generateQuestionPlan(
 
   if (analysis.shouldIncreaseDifficulty && remaining > 0) {
     const challengeCount = Math.min(Math.ceil(targetCount * 0.1), remaining);
-    const challengeType = analysis.strongTypes.length > 0 ? analysis.strongTypes[0].type : 'arithmetic';
-    plan.push({
-      type: challengeType,
-      difficulty: 'hard',
-      reason: 'challenge',
-      explanation: '挑战更高难度，拓展能力边界',
-      count: challengeCount
-    });
+    if (analysis.strongKnowledgePoints.length > 0) {
+      const strongKp = analysis.strongKnowledgePoints[0];
+      const mappedType = getTypeForKnowledgePoint(strongKp.kp);
+      const typeNames: { [key in QuestionType]: string } = {
+        arithmetic: '口算',
+        fraction: '分数',
+        equation: '方程',
+        geometry: '几何测量',
+        wordProblem: '应用题'
+      };
+      plan.push({
+        type: mappedType,
+        difficulty: 'hard',
+        knowledgePoints: [strongKp.kp],
+        reason: 'challenge',
+        explanation: `[挑战] 在已掌握的知识点「${strongKp.kp.name}」上挑战更高难度的${typeNames[mappedType]}题，拓展能力边界`,
+        count: challengeCount
+      });
+    } else {
+      const challengeType = analysis.strongTypes.length > 0 ? analysis.strongTypes[0].type : 'arithmetic';
+      plan.push({
+        type: challengeType,
+        difficulty: 'hard',
+        reason: 'challenge',
+        explanation: '[挑战] 挑战更高难度，拓展能力边界',
+        count: challengeCount
+      });
+    }
     remaining -= challengeCount;
   }
 
@@ -255,12 +332,19 @@ function generateQuestionPlan(
     const existingTypes = plan.map(p => p.type);
     const otherTypes = allTypes.filter(t => !existingTypes.includes(t));
     const fillType = otherTypes.length > 0 ? otherTypes[0] : 'arithmetic';
+    const typeNames: { [key in QuestionType]: string } = {
+      arithmetic: '口算',
+      fraction: '分数',
+      equation: '方程',
+      geometry: '几何测量',
+      wordProblem: '应用题'
+    };
 
     plan.push({
       type: fillType,
       difficulty: expectedDifficulty,
       reason: 'balanced',
-      explanation: '均衡练习，保持全面发展',
+      explanation: `[均衡] 补充${typeNames[fillType]}练习，保持全面发展`,
       count: remaining
     });
     remaining = 0;

@@ -12,7 +12,9 @@ import type {
   QuestionType,
   Difficulty,
   DiagnosticReport,
-  AnswerCategory
+  AnswerCategory,
+  ClassDiagnosticConfig,
+  ClassDiagnosticReport
 } from '../types';
 import { getAdaptiveRecommendation } from '../adaptive';
 
@@ -248,7 +250,16 @@ export function createExercise(questions?: Question[]) {
   }
 
   function addAnswer(record: AnswerRecord): void {
-    answers.push(record);
+    const question = questionMap[record.questionId];
+    const enrichedRecord: AnswerRecord = {
+      ...record,
+      question: record.question || question?.question,
+      questionType: record.questionType || question?.type,
+      questionDifficulty: record.questionDifficulty || question?.difficulty,
+      questionKnowledgePoint: record.questionKnowledgePoint || question?.knowledgePoint,
+      correctAnswer: record.correctAnswer || question?.correctAnswer
+    };
+    answers.push(enrichedRecord);
     if (record.attempts && record.attempts.length > 0) {
       attemptMap.set(record.questionId, record.attempts);
     }
@@ -262,9 +273,15 @@ export function createExercise(questions?: Question[]) {
       attemptMap.forEach((attempts, questionId) => {
         const lastAttempt = attempts[attempts.length - 1];
         const firstAttempt = attempts[0];
+        const question = questionMap[questionId];
 
         effective.push({
           questionId,
+          question: question?.question,
+          questionType: question?.type,
+          questionDifficulty: question?.difficulty,
+          questionKnowledgePoint: question?.knowledgePoint,
+          correctAnswer: question?.correctAnswer,
           attempts,
           finalAnswer: lastAttempt?.userAnswer || null,
           isCorrect: lastAttempt?.isCorrect || false,
@@ -655,8 +672,8 @@ export function generateDiagnosticReport(record: ExerciseRecord, questions?: Que
 
   answers.forEach(answer => {
     const q = questionMap[answer.questionId];
-    if (!q) return;
-    const type = q.type;
+    const type = answer.questionType || q?.type;
+    if (!type) return;
     typeTotal[type] = (typeTotal[type] || 0) + 1;
     if (answer.isCorrect) {
       typeCorrect[type] = (typeCorrect[type] || 0) + 1;
@@ -714,7 +731,8 @@ export function generateDiagnosticReport(record: ExerciseRecord, questions?: Que
 
     answers.forEach(answer => {
       const q = questionMap[answer.questionId];
-      if (q && q.knowledgePoint?.id === kp.id) {
+      const answerKp = answer.questionKnowledgePoint || q?.knowledgePoint;
+      if (answerKp?.id === kp.id) {
         const category = answerCategories[answer.questionId];
         categoryBreakdown[category]++;
       }
@@ -748,7 +766,12 @@ export function generateDiagnosticReport(record: ExerciseRecord, questions?: Que
 
   answers.forEach(answer => {
     const q = questionMap[answer.questionId];
-    if (!q) return;
+    const questionText = answer.question || q?.question;
+    const type = answer.questionType || q?.type;
+    const difficulty = answer.questionDifficulty || q?.difficulty;
+    const knowledgePoint = answer.questionKnowledgePoint || q?.knowledgePoint;
+
+    if (!questionText || !type) return;
 
     questionTimes[answer.questionId] = answer.totalTimeSpent;
     questionAttempts[answer.questionId] = answer.attemptsCount;
@@ -756,10 +779,10 @@ export function generateDiagnosticReport(record: ExerciseRecord, questions?: Que
     const progress = record.questionProgress?.find(p => p.questionId === answer.questionId);
 
     questionDetails[answer.questionId] = {
-      question: q.question,
-      type: q.type,
-      difficulty: q.difficulty,
-      knowledgePoint: q.knowledgePoint,
+      question: questionText,
+      type: type,
+      difficulty: difficulty || 'medium',
+      knowledgePoint: knowledgePoint,
       isCorrect: answer.isCorrect,
       firstAttemptCorrect: answer.firstAttemptCorrect,
       attempts: answer.attemptsCount,
@@ -839,8 +862,286 @@ export interface ExerciseSession {
   getMasteryLevel: () => number;
 }
 
+export function generateClassDiagnosticReport(config: ClassDiagnosticConfig): ClassDiagnosticReport {
+  const { records, exerciseId, className, questions } = config;
+  const totalStudents = records.length;
+  const submittedCount = records.filter(r => r.record.answers.length > 0).length;
+
+  const questionMap: { [id: string]: Question } = {};
+  if (questions) {
+    questions.forEach(q => {
+      questionMap[q.id] = q;
+    });
+  }
+
+  let totalAccuracy = 0;
+  let totalMastery = 0;
+  let totalFirstAccuracy = 0;
+  let totalTime = 0;
+  const masteryDistribution = { excellent: 0, good: 0, medium: 0, needsImprovement: 0 };
+
+  records.forEach(r => {
+    totalAccuracy += r.record.overallAccuracy;
+    totalMastery += r.record.masteryLevel;
+    totalFirstAccuracy += r.record.firstAttemptAccuracy;
+    totalTime += r.record.avgTimePerQuestion;
+
+    const mastery = r.record.masteryLevel;
+    if (mastery >= 85) masteryDistribution.excellent++;
+    else if (mastery >= 70) masteryDistribution.good++;
+    else if (mastery >= 50) masteryDistribution.medium++;
+    else masteryDistribution.needsImprovement++;
+  });
+
+  const avgAccuracy = submittedCount > 0 ? totalAccuracy / submittedCount : 0;
+  const avgMasteryLevel = submittedCount > 0 ? totalMastery / submittedCount : 0;
+  const avgFirstAttemptAccuracy = submittedCount > 0 ? totalFirstAccuracy / submittedCount : 0;
+  const avgTimePerQuestion = submittedCount > 0 ? totalTime / submittedCount : 0;
+
+  const kpStatsMap: { [kpId: string]: { totalAccuracy: number; count: number; weakCount: number; totalPass: number; knowledgePoint: KnowledgePoint } } = {};
+
+  records.forEach(r => {
+    r.record.knowledgePointStats.forEach(stat => {
+      const kpId = stat.knowledgePoint.id;
+      if (!kpStatsMap[kpId]) {
+        kpStatsMap[kpId] = {
+          totalAccuracy: 0,
+          count: 0,
+          weakCount: 0,
+          totalPass: 0,
+          knowledgePoint: stat.knowledgePoint
+        };
+      }
+      kpStatsMap[kpId].totalAccuracy += stat.accuracy;
+      kpStatsMap[kpId].count++;
+      if (stat.accuracy < 0.5) kpStatsMap[kpId].weakCount++;
+      if (stat.accuracy >= 0.6) kpStatsMap[kpId].totalPass++;
+    });
+  });
+
+  const kpStats: ClassDiagnosticReport['knowledgePointDimension']['stats'] = {};
+  const classWeakPoints: KnowledgePoint[] = [];
+  const classStrongPoints: KnowledgePoint[] = [];
+
+  Object.entries(kpStatsMap).forEach(([kpId, data]) => {
+    const avgAcc = data.totalAccuracy / data.count;
+    const passRate = data.totalPass / data.count;
+    const classMastery = Math.round(avgAcc * 100);
+
+    let priority: 'high' | 'medium' | 'low' = 'medium';
+    if (avgAcc < 0.5 || data.weakCount > totalStudents * 0.4) priority = 'high';
+    else if (avgAcc >= 0.8) priority = 'low';
+
+    kpStats[kpId] = {
+      knowledgePoint: data.knowledgePoint,
+      avgAccuracy: avgAcc,
+      classMasteryLevel: classMastery,
+      weakCount: data.weakCount,
+      passRate,
+      priority
+    };
+
+    if (avgAcc < 0.5) classWeakPoints.push(data.knowledgePoint);
+    if (avgAcc >= 0.8) classStrongPoints.push(data.knowledgePoint);
+  });
+
+  classWeakPoints.sort((a, b) => kpStats[a.id].avgAccuracy - kpStats[b.id].avgAccuracy);
+
+  const questionStatsMap: { [qId: string]: { correctCount: number; totalAttempts: number; totalTime: number; errorMap: { [type: string]: number }; question?: string; type?: QuestionType; difficulty?: Difficulty; knowledgePoint?: KnowledgePoint } } = {};
+
+  records.forEach(r => {
+    r.record.answers.forEach(answer => {
+      const qId = answer.questionId;
+      const q = questionMap[qId];
+      const questionText = answer.question || q?.question;
+      const type = answer.questionType || q?.type;
+      const difficulty = answer.questionDifficulty || q?.difficulty;
+      const knowledgePoint = answer.questionKnowledgePoint || q?.knowledgePoint;
+
+      if (!questionStatsMap[qId]) {
+        questionStatsMap[qId] = {
+          correctCount: 0,
+          totalAttempts: 0,
+          totalTime: 0,
+          errorMap: {},
+          question: questionText,
+          type,
+          difficulty,
+          knowledgePoint
+        };
+      }
+
+      if (answer.isCorrect) questionStatsMap[qId].correctCount++;
+      questionStatsMap[qId].totalAttempts += answer.attemptsCount;
+      questionStatsMap[qId].totalTime += answer.totalTimeSpent;
+
+      if (answer.firstErrorType) {
+        const errType = answer.firstErrorType;
+        questionStatsMap[qId].errorMap[errType] = (questionStatsMap[qId].errorMap[errType] || 0) + 1;
+      }
+    });
+  });
+
+  const questionStats: ClassDiagnosticReport['questionDimension']['stats'] = {};
+
+  Object.entries(questionStatsMap).forEach(([qId, data]) => {
+    const passRate = data.correctCount / submittedCount;
+    const avgAttempts = data.totalAttempts / submittedCount;
+    const avgTime = data.totalTime / submittedCount;
+
+    const commonErrors = Object.entries(data.errorMap)
+      .map(([type, count]) => ({ type: type as ErrorType, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 3);
+
+    questionStats[qId] = {
+      question: data.question || '题目',
+      type: data.type || 'arithmetic',
+      difficulty: data.difficulty || 'medium',
+      knowledgePoint: data.knowledgePoint,
+      correctCount: data.correctCount,
+      passRate,
+      avgAttempts,
+      avgTime,
+      commonErrors
+    };
+  });
+
+  const hardestQuestions = Object.entries(questionStats)
+    .sort((a, b) => a[1].passRate - b[1].passRate)
+    .slice(0, 5)
+    .map(([id]) => id);
+
+  const easiestQuestions = Object.entries(questionStats)
+    .sort((a, b) => b[1].passRate - a[1].passRate)
+    .slice(0, 3)
+    .map(([id]) => id);
+
+  const sortedStudents = [...records].sort((a, b) => b.record.masteryLevel - a.record.masteryLevel);
+
+  const focusStudents: ClassDiagnosticReport['studentDimension']['focusStudents'] = [];
+
+  sortedStudents.forEach(r => {
+    const mastery = r.record.masteryLevel;
+    const accuracy = r.record.overallAccuracy;
+
+    if (mastery < 50) {
+      focusStudents.push({
+        studentId: r.studentId,
+        studentName: r.studentName,
+        masteryLevel: mastery,
+        accuracy,
+        status: 'needsAttention',
+        reason: '掌握度低于50%，需要重点关注和个别辅导'
+      });
+    } else if (r.record.improvementRate < 0 && accuracy < 0.6) {
+      focusStudents.push({
+        studentId: r.studentId,
+        studentName: r.studentName,
+        masteryLevel: mastery,
+        accuracy,
+        status: 'declining',
+        reason: '表现呈下滑趋势，需要关注学习状态'
+      });
+    } else if (mastery >= 90 && accuracy >= 0.9) {
+      focusStudents.push({
+        studentId: r.studentId,
+        studentName: r.studentName,
+        masteryLevel: mastery,
+        accuracy,
+        status: 'excellent',
+        reason: '表现非常优秀，可以考虑提供拓展内容'
+      });
+    }
+  });
+
+  const ranking = sortedStudents.map(r => ({
+    studentId: r.studentId,
+    studentName: r.studentName,
+    masteryLevel: r.record.masteryLevel,
+    accuracy: r.record.overallAccuracy
+  }));
+
+  const keyFindings: string[] = [];
+  const teachingSuggestions: string[] = [];
+
+  if (avgAccuracy < 0.6) {
+    keyFindings.push(`班级整体正确率偏低（${(avgAccuracy * 100).toFixed(1)}%），需要加强基础训练`);
+  } else if (avgAccuracy >= 0.85) {
+    keyFindings.push(`班级整体表现优秀（正确率${(avgAccuracy * 100).toFixed(1)}%），基础扎实`);
+  }
+
+  if (masteryDistribution.needsImprovement > totalStudents * 0.3) {
+    keyFindings.push(`超过30%的学生（${masteryDistribution.needsImprovement}人）掌握度低于50%，两极分化较明显`);
+  }
+
+  if (classWeakPoints.length > 0) {
+    keyFindings.push(`班级薄弱知识点：${classWeakPoints.map(k => k.name).join('、')}`);
+    teachingSuggestions.push(`建议重点复习：${classWeakPoints.map(k => k.name).join('、')}`);
+  }
+
+  if (hardestQuestions.length > 0) {
+    keyFindings.push(`难题集中在第${hardestQuestions.map((_, i) => i + 1).join('、')}题，全班通过率较低`);
+    teachingSuggestions.push('建议针对难题进行集体讲解，帮助学生理解解题思路');
+  }
+
+  teachingSuggestions.push('建议分层教学，对不同掌握程度的学生提供针对性辅导');
+
+  if (focusStudents.filter(s => s.status === 'needsAttention').length > 0) {
+    teachingSuggestions.push(`对${focusStudents.filter(s => s.status === 'needsAttention').length}名重点关注学生进行个别辅导`);
+  }
+
+  const summary = `本次练习共${totalStudents}人参与，班级平均正确率${(avgAccuracy * 100).toFixed(1)}%，平均掌握度${avgMasteryLevel.toFixed(1)}分。` +
+    `${classWeakPoints.length > 0 ? `主要薄弱点：${classWeakPoints.map(k => k.name).join('、')}。` : ''}` +
+    `整体表现${avgAccuracy >= 0.7 ? '良好' : avgAccuracy >= 0.5 ? '一般' : '需要加强'}。`;
+
+  const nextSteps: string[] = [];
+  if (classWeakPoints.length > 0) {
+    nextSteps.push(`1. 针对${classWeakPoints.map(k => k.name).join('、')}进行专项复习`);
+  }
+  nextSteps.push('2. 发放分层补救练习包，因材施教');
+  nextSteps.push('3. 对重点关注学生进行一对一辅导');
+  nextSteps.push('4. 一周后进行复测，检验学习效果');
+
+  return {
+    exerciseId: exerciseId || records[0]?.record.exerciseId || 'class-exercise',
+    exerciseDate: records[0]?.record.endTime || Date.now(),
+    className,
+    totalStudents,
+    submittedCount,
+    overall: {
+      avgAccuracy,
+      avgMasteryLevel,
+      avgFirstAttemptAccuracy,
+      avgTimePerQuestion,
+      masteryDistribution
+    },
+    knowledgePointDimension: {
+      stats: kpStats,
+      classWeakPoints,
+      classStrongPoints
+    },
+    questionDimension: {
+      stats: questionStats,
+      hardestQuestions,
+      easiestQuestions
+    },
+    studentDimension: {
+      focusStudents: focusStudents.slice(0, 10),
+      ranking: ranking.slice(0, 20)
+    },
+    teachingResearch: {
+      summary,
+      keyFindings,
+      teachingSuggestions,
+      nextSteps
+    }
+  };
+}
+
 export const recordModule = {
   createExercise,
   getRecommendation,
-  generateDiagnosticReport
+  generateDiagnosticReport,
+  generateClassDiagnosticReport
 };

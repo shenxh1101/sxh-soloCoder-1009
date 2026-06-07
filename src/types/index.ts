@@ -130,6 +130,11 @@ export interface AnswerAttempt {
 
 export interface AnswerRecord {
   questionId: string;
+  question?: string;
+  questionType?: QuestionType;
+  questionDifficulty?: Difficulty;
+  questionKnowledgePoint?: KnowledgePoint;
+  correctAnswer?: number | Fraction | string;
   attempts: AnswerAttempt[];
   finalAnswer: number | Fraction | string | null;
   isCorrect: boolean;
@@ -258,10 +263,16 @@ export interface MathExerciseSDK {
     };
     getRecommendation(previousRecord: ExerciseRecord): AdaptiveRecommendation;
     generateDiagnosticReport(record: ExerciseRecord, questions?: Question[]): DiagnosticReport;
+    generateClassDiagnosticReport(config: ClassDiagnosticConfig): ClassDiagnosticReport;
   };
   plan: {
     create(config: StudyPlanConfig): StudyPlan;
     adjust(config: PlanAdjustmentConfig): StudyPlan;
+    createClass(config: ClassStudyPlanConfig): ClassStudyPlan;
+    adjustClass(config: ClassPlanAdjustmentConfig): ClassStudyPlan;
+  };
+  remedial: {
+    create(config: RemedialPackageConfig): RemedialPackage;
   };
 }
 
@@ -425,5 +436,175 @@ export interface StudyPlanConfig {
 export interface PlanAdjustmentConfig {
   plan: StudyPlan;
   latestRecord: ExerciseRecord;
+  completedDay: number;
+}
+
+export interface ClassDiagnosticReport {
+  exerciseId: string;
+  exerciseDate: number;
+  className?: string;
+  totalStudents: number;
+  submittedCount: number;
+  overall: {
+    avgAccuracy: number;
+    avgMasteryLevel: number;
+    avgFirstAttemptAccuracy: number;
+    avgTimePerQuestion: number;
+    masteryDistribution: {
+      excellent: number;
+      good: number;
+      medium: number;
+      needsImprovement: number;
+    };
+  };
+  knowledgePointDimension: {
+    stats: {
+      [kpId: string]: {
+        knowledgePoint: KnowledgePoint;
+        avgAccuracy: number;
+        classMasteryLevel: number;
+        weakCount: number;
+        passRate: number;
+        priority: 'high' | 'medium' | 'low';
+      };
+    };
+    classWeakPoints: KnowledgePoint[];
+    classStrongPoints: KnowledgePoint[];
+  };
+  questionDimension: {
+    stats: {
+      [questionId: string]: {
+        question: string;
+        type: QuestionType;
+        difficulty: Difficulty;
+        knowledgePoint?: KnowledgePoint;
+        correctCount: number;
+        passRate: number;
+        avgAttempts: number;
+        avgTime: number;
+        commonErrors: { type: ErrorType; count: number }[];
+      };
+    };
+    hardestQuestions: string[];
+    easiestQuestions: string[];
+  };
+  studentDimension: {
+    focusStudents: {
+      studentId: string;
+      studentName?: string;
+      masteryLevel: number;
+      accuracy: number;
+      status: 'needsAttention' | 'declining' | 'excellent';
+      reason: string;
+    }[];
+    ranking: {
+      studentId: string;
+      studentName?: string;
+      masteryLevel: number;
+      accuracy: number;
+    }[];
+  };
+  teachingResearch: {
+    summary: string;
+    keyFindings: string[];
+    teachingSuggestions: string[];
+    nextSteps: string[];
+  };
+}
+
+export interface ClassDiagnosticConfig {
+  records: {
+    studentId: string;
+    studentName?: string;
+    record: ExerciseRecord;
+  }[];
+  exerciseId?: string;
+  className?: string;
+  questions?: Question[];
+}
+
+export interface RemedialPackage {
+  packageId: string;
+  createdAt: number;
+  baseExerciseId: string;
+  className?: string;
+  totalGroups: number;
+  groups: {
+    groupName: '基础组' | '巩固组' | '挑战组';
+    targetStudents: string;
+    suitableFor: {
+      minMastery: number;
+      maxMastery: number;
+      description: string;
+    };
+    totalQuestions: number;
+    estimatedTime: number;
+    avgDifficulty: Difficulty;
+    typeRatio: { [key in QuestionType]?: number };
+    knowledgePoints: {
+      knowledgePoint: KnowledgePoint;
+      count: number;
+      difficulty: Difficulty;
+      purpose: 'review' | 'strengthen' | 'challenge';
+    }[];
+    questions?: QuestionWithReason[];
+    groupGoal: string;
+    focusAreas: string[];
+  }[];
+  weakPoints: KnowledgePoint[];
+}
+
+export interface RemedialPackageConfig {
+  classReport: ClassDiagnosticReport;
+  totalQuestions?: number;
+  questions?: Question[];
+  baseExerciseId?: string;
+  className?: string;
+}
+
+export interface ClassStudyPlan {
+  planId: string;
+  createdAt: number;
+  className?: string;
+  totalDays: number;
+  startDate: number;
+  totalQuestions: number;
+  totalEstimatedTime: number;
+  overallGoal: string;
+  classWeakPoints: KnowledgePoint[];
+  classStrongPoints: KnowledgePoint[];
+  days: StudyPlanDay[];
+  baseRecords: {
+    studentId: string;
+    studentName?: string;
+    record: ExerciseRecord;
+  }[];
+  adjustmentHistory: {
+    date: number;
+    day: number;
+    reason: string;
+    changes: string;
+  }[];
+  personalPlans?: {
+    [studentId: string]: StudyPlan;
+  };
+}
+
+export interface ClassStudyPlanConfig {
+  classReport: ClassDiagnosticReport;
+  totalDays: 7 | 14;
+  startDate?: number;
+  dailyQuestions?: number;
+  className?: string;
+  includePersonalPlans?: boolean;
+}
+
+export interface ClassPlanAdjustmentConfig {
+  plan: ClassStudyPlan;
+  latestRecords: {
+    studentId: string;
+    studentName?: string;
+    record: ExerciseRecord;
+  }[];
   completedDay: number;
 }

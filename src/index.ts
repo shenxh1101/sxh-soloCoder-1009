@@ -5,14 +5,16 @@ import { gradingModule } from './grading';
 import { hintModule } from './hint';
 import { recordModule } from './record';
 import { planModule } from './plan';
+import { remedialModule } from './remedial';
 
 export * from './types';
 export { createQuestions, createMixedQuestions, createAdaptiveQuestions } from './question';
 export { renderQuestion, renderQuestionPlain } from './render';
 export { gradingModule } from './grading';
 export { hintModule } from './hint';
-export { recordModule, createExercise, getRecommendation, generateDiagnosticReport } from './record';
-export { planModule, createStudyPlan, adjustStudyPlan } from './plan';
+export { recordModule, createExercise, getRecommendation, generateDiagnosticReport, generateClassDiagnosticReport } from './record';
+export { planModule, createStudyPlan, adjustStudyPlan, createClassStudyPlan, adjustClassStudyPlan } from './plan';
+export { remedialModule, createRemedialPackage } from './remedial';
 export { createSeededRandom } from './utils/random';
 export {
   gcd,
@@ -38,7 +40,10 @@ export const mathExerciseSDK: MathExerciseSDK = {
   grading: gradingModule,
   hint: hintModule,
   record: recordModule,
-  plan: planModule
+  plan: planModule,
+  remedial: {
+    create: remedialModule.createRemedialPackage
+  }
 };
 
 export default mathExerciseSDK;

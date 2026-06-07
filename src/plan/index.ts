@@ -7,9 +7,14 @@ import type {
   KnowledgePoint,
   QuestionType,
   Difficulty,
-  KnowledgePointStat
+  KnowledgePointStat,
+  ClassDiagnosticReport,
+  ClassStudyPlan,
+  ClassStudyPlanConfig,
+  ClassPlanAdjustmentConfig,
+  ClassDiagnosticConfig
 } from '../types';
-import { generateDiagnosticReport } from '../record';
+import { generateDiagnosticReport, generateClassDiagnosticReport } from '../record';
 
 const typeNames: { [key in QuestionType]: string } = {
   arithmetic: '口算',
@@ -378,7 +383,462 @@ export function adjustStudyPlan(config: PlanAdjustmentConfig): StudyPlan {
   };
 }
 
+function generateId(): string {
+  return `class-plan-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+}
+
+function analyzeClassRecords(
+  records: { studentId: string; studentName?: string; record: ExerciseRecord }[]
+): {
+  allKnowledgePoints: Map<string, { kp: KnowledgePoint; avgAccuracy: number; totalQuestions: number; weakStudentCount: number }>;
+  allTypes: Map<QuestionType, { total: number; correct: number; avgTime: number }>;
+  classWeakPoints: Array<{ kp: KnowledgePoint; accuracy: number }>;
+  classStrongPoints: Array<{ kp: KnowledgePoint; accuracy: number }>;
+  avgMastery: number;
+  overallAccuracy: number;
+} {
+  const allKnowledgePoints = new Map<string, { kp: KnowledgePoint; avgAccuracy: number; totalQuestions: number; weakStudentCount: number }>();
+  const allTypes = new Map<QuestionType, { total: number; correct: number; avgTime: number }>();
+  let totalMastery = 0;
+  let totalAccuracy = 0;
+  let recordCount = 0;
+
+  records.forEach(({ record }) => {
+    totalMastery += record.masteryLevel;
+    totalAccuracy += record.overallAccuracy;
+    recordCount++;
+
+    if (record.knowledgePointStats) {
+      record.knowledgePointStats.forEach((stat: KnowledgePointStat) => {
+        const existing = allKnowledgePoints.get(stat.knowledgePoint.id);
+        if (existing) {
+          existing.avgAccuracy = (existing.avgAccuracy * existing.totalQuestions + stat.accuracy * stat.total) /
+            (existing.totalQuestions + stat.total);
+          existing.totalQuestions += stat.total;
+          if (stat.accuracy < 0.5) existing.weakStudentCount++;
+        } else {
+          allKnowledgePoints.set(stat.knowledgePoint.id, {
+            kp: stat.knowledgePoint,
+            avgAccuracy: stat.accuracy,
+            totalQuestions: stat.total,
+            weakStudentCount: stat.accuracy < 0.5 ? 1 : 0
+          });
+        }
+      });
+    }
+
+    if (record.typeStats) {
+      Object.entries(record.typeStats).forEach(([type, stat]) => {
+        if (stat) {
+          const existing = allTypes.get(type as QuestionType);
+          if (existing) {
+            existing.total += stat.total;
+            existing.correct += stat.correct;
+            existing.avgTime = (existing.avgTime * (existing.total - stat.total) + stat.avgTime * stat.total) / existing.total;
+          } else {
+            allTypes.set(type as QuestionType, {
+              total: stat.total,
+              correct: stat.correct,
+              avgTime: stat.avgTime
+            });
+          }
+        }
+      });
+    }
+  });
+
+  const classWeakPoints: Array<{ kp: KnowledgePoint; accuracy: number }> = [];
+  const classStrongPoints: Array<{ kp: KnowledgePoint; accuracy: number }> = [];
+
+  allKnowledgePoints.forEach((value) => {
+    if (value.avgAccuracy < 0.6 || value.weakStudentCount > records.length * 0.3) {
+      classWeakPoints.push({ kp: value.kp, accuracy: value.avgAccuracy });
+    } else if (value.avgAccuracy >= 0.8) {
+      classStrongPoints.push({ kp: value.kp, accuracy: value.avgAccuracy });
+    }
+  });
+
+  classWeakPoints.sort((a, b) => a.accuracy - b.accuracy);
+  classStrongPoints.sort((a, b) => b.accuracy - a.accuracy);
+
+  return {
+    allKnowledgePoints,
+    allTypes,
+    classWeakPoints,
+    classStrongPoints,
+    avgMastery: recordCount > 0 ? totalMastery / recordCount : 50,
+    overallAccuracy: recordCount > 0 ? totalAccuracy / recordCount : 0.5
+  };
+}
+
+function generateClassDailyPlan(
+  day: number,
+  analysis: ReturnType<typeof analyzeClassRecords>,
+  totalDays: number,
+  dailyQuestions: number,
+  date?: number
+): StudyPlanDay {
+  const stage = day / totalDays;
+
+  let stageName: string;
+  let stageDescription: string;
+  let difficulty: Difficulty;
+  let weakRatio: number;
+
+  if (stage <= 0.3) {
+    stageName = '基础巩固阶段';
+    stageDescription = '重点突破班级薄弱知识点，夯实基础';
+    difficulty = 'easy';
+    weakRatio = 0.7;
+  } else if (stage <= 0.7) {
+    stageName = '强化提升阶段';
+    stageDescription = '巩固基础，适当提升难度，加强综合应用';
+    difficulty = 'medium';
+    weakRatio = 0.5;
+  } else {
+    stageName = '综合冲刺阶段';
+    stageDescription = '查漏补缺，综合提升，备战检测';
+    difficulty = 'medium';
+    weakRatio = 0.4;
+  }
+
+  const weakKpCount = analysis.classWeakPoints.length;
+  const strongKpCount = analysis.classStrongPoints.length;
+
+  const knowledgePoints: StudyPlanDay['knowledgePoints'] = [];
+  const typeRatio: StudyPlanDay['typeRatio'] = {};
+
+  let remaining = dailyQuestions;
+
+  if (weakKpCount > 0) {
+    const weakCount = Math.ceil(dailyQuestions * weakRatio);
+    const perKp = Math.max(2, Math.ceil(weakCount / Math.min(weakKpCount, 3)));
+
+    analysis.classWeakPoints.slice(0, 3).forEach(({ kp }) => {
+      const count = Math.min(perKp, remaining);
+      if (count > 0) {
+        const kpType = getTypeForKnowledgePoint(kp);
+        typeRatio[kpType] = (typeRatio[kpType] || 0) + count / dailyQuestions;
+
+        knowledgePoints.push({
+          knowledgePoint: kp,
+          count,
+          difficulty,
+          purpose: 'strengthen'
+        });
+        remaining -= count;
+      }
+    });
+  }
+
+  if (strongKpCount > 0 && remaining > 0) {
+    const reviewCount = Math.min(Math.ceil(dailyQuestions * 0.2), remaining);
+    const perKp = Math.max(1, Math.ceil(reviewCount / Math.min(strongKpCount, 2)));
+
+    analysis.classStrongPoints.slice(0, 2).forEach(({ kp }) => {
+      const count = Math.min(perKp, remaining);
+      if (count > 0) {
+        const kpType = getTypeForKnowledgePoint(kp);
+        typeRatio[kpType] = (typeRatio[kpType] || 0) + count / dailyQuestions;
+
+        knowledgePoints.push({
+          knowledgePoint: kp,
+          count,
+          difficulty: difficulty as Difficulty,
+          purpose: 'review'
+        });
+        remaining -= count;
+      }
+    });
+  }
+
+  if (remaining > 0 && stage > 0.5) {
+    const previewCount = Math.min(Math.ceil(dailyQuestions * 0.1), remaining);
+    const previewKp = analysis.classStrongPoints[0];
+    if (previewKp) {
+      const kpType = getTypeForKnowledgePoint(previewKp.kp);
+      typeRatio[kpType] = (typeRatio[kpType] || 0) + previewCount / dailyQuestions;
+
+      knowledgePoints.push({
+        knowledgePoint: previewKp.kp,
+        count: previewCount,
+        difficulty: 'hard',
+        purpose: 'preview'
+      });
+      remaining -= previewCount;
+    }
+  }
+
+  if (remaining > 0) {
+    const allTypes: QuestionType[] = ['arithmetic', 'fraction', 'equation', 'geometry', 'wordProblem'];
+    const existingTypes = Object.keys(typeRatio) as QuestionType[];
+    const otherTypes = allTypes.filter(t => !existingTypes.includes(t));
+    const fillType = otherTypes.length > 0 ? otherTypes[0] : 'arithmetic';
+
+    typeRatio[fillType] = (typeRatio[fillType] || 0) + remaining / dailyQuestions;
+
+    if (analysis.classWeakPoints.length > 0) {
+      const kp = analysis.classWeakPoints[0].kp;
+      knowledgePoints.push({
+        knowledgePoint: kp,
+        count: remaining,
+        difficulty,
+        purpose: 'strengthen'
+      });
+    }
+  }
+
+  const totalTime = dailyQuestions * 6 * 60;
+
+  let dailyGoal = `第${day}天（${stageName}）：`;
+  const focusAreas: string[] = [];
+
+  if (analysis.classWeakPoints.length > 0) {
+    const weakNames = analysis.classWeakPoints.slice(0, 2).map(w => w.kp.name).join('、');
+    dailyGoal += `重点突破「${weakNames}」`;
+    focusAreas.push(`班级重点薄弱知识点：${weakNames}`);
+  }
+
+  if (stage <= 0.3) {
+    focusAreas.push('从基础概念入手，确保全班同学理解透彻');
+    focusAreas.push('建议课堂上重点讲解薄弱知识点');
+  } else if (stage <= 0.7) {
+    focusAreas.push('适当增加难度，提升综合解题能力');
+    focusAreas.push('鼓励学生互助，共同进步');
+  } else {
+    focusAreas.push('综合练习，查漏补缺');
+    focusAreas.push('准备进行班级小测，检验复习效果');
+  }
+
+  return {
+    day,
+    date,
+    totalQuestions: dailyQuestions,
+    estimatedTime: totalTime,
+    typeRatio,
+    knowledgePoints,
+    dailyGoal,
+    focusAreas,
+    completed: false
+  };
+}
+
+function getTypeForKnowledgePoint(kp: KnowledgePoint): QuestionType {
+  const typeMap: { [kpId: string]: QuestionType } = {
+    'addition-subtraction': 'arithmetic',
+    'multiplication-division': 'arithmetic',
+    'mixed-operation': 'arithmetic',
+    'decimal-calculation': 'arithmetic',
+    'fraction-basic': 'fraction',
+    'fraction-add-sub': 'fraction',
+    'fraction-mul-div': 'fraction',
+    'fraction-mixed': 'fraction',
+    'one-variable': 'equation',
+    'two-variable': 'equation',
+    'word-problem-eq': 'equation',
+    'rectangle-area': 'geometry',
+    'rectangle-perimeter': 'geometry',
+    'circle-area': 'geometry',
+    'circle-circumference': 'geometry',
+    'triangle-area': 'geometry',
+    'area-combined': 'geometry',
+    'word-problem-basic': 'wordProblem',
+    'word-problem-distance': 'wordProblem',
+    'word-problem-work': 'wordProblem',
+    'word-problem-fraction': 'wordProblem',
+    'word-problem-percentage': 'wordProblem'
+  };
+  return typeMap[kp.id] || 'arithmetic';
+}
+
+export function createClassStudyPlan(config: ClassStudyPlanConfig): ClassStudyPlan {
+  const { classReport, totalDays, startDate = Date.now(), dailyQuestions = 10, className, includePersonalPlans = false } = config;
+
+  const baseRecords = classReport.studentDimension.ranking
+    .map(r => ({
+      studentId: r.studentId,
+      studentName: r.studentName,
+      record: (r as unknown as { record?: ExerciseRecord }).record || {} as ExerciseRecord
+    }))
+    .filter(r => r.record && r.record.knowledgePointStats);
+
+  const analysis = analyzeClassRecords(baseRecords);
+
+  const classAnalysis = {
+    ...analysis,
+    classWeakPoints: classReport.knowledgePointDimension.classWeakPoints.map(kp => ({ kp, accuracy: classReport.knowledgePointDimension.stats[kp.id]?.avgAccuracy || 0 })),
+    classStrongPoints: classReport.knowledgePointDimension.classStrongPoints.map(kp => ({ kp, accuracy: classReport.knowledgePointDimension.stats[kp.id]?.avgAccuracy || 0 })),
+    avgMastery: classReport.overall.avgMasteryLevel,
+    overallAccuracy: classReport.overall.avgAccuracy
+  };
+
+  const days: StudyPlanDay[] = [];
+  let totalQuestions = 0;
+  let totalEstimatedTime = 0;
+
+  for (let i = 1; i <= totalDays; i++) {
+    const dayDate = startDate + (i - 1) * 24 * 60 * 60 * 1000;
+    const dayPlan = generateClassDailyPlan(i, classAnalysis, totalDays, dailyQuestions, dayDate);
+    days.push(dayPlan);
+    totalQuestions += dayPlan.totalQuestions;
+    totalEstimatedTime += dayPlan.estimatedTime;
+  }
+
+  const overallGoal = `班级${totalDays}天复习计划：针对班级薄弱知识点进行系统复习，` +
+    `整体目标是班级平均正确率从${(classReport.overall.avgAccuracy * 100).toFixed(0)}%提升到80%以上。`;
+
+  const plan: ClassStudyPlan = {
+    planId: generateId(),
+    createdAt: Date.now(),
+    className: className || classReport.className,
+    totalDays,
+    startDate,
+    totalQuestions,
+    totalEstimatedTime,
+    overallGoal,
+    classWeakPoints: classReport.knowledgePointDimension.classWeakPoints,
+    classStrongPoints: classReport.knowledgePointDimension.classStrongPoints,
+    days,
+    baseRecords,
+    adjustmentHistory: []
+  };
+
+  if (includePersonalPlans) {
+    const personalPlans: { [studentId: string]: StudyPlan } = {};
+    classReport.studentDimension.ranking.slice(0, 10).forEach(student => {
+      const studentRecords = classReport.studentDimension.ranking
+        .filter(r => r.studentId === student.studentId)
+        .map(r => r as unknown as ExerciseRecord)
+        .filter(r => r.knowledgePointStats);
+
+      if (studentRecords.length > 0) {
+        personalPlans[student.studentId] = createStudyPlan({
+          baseRecords: studentRecords,
+          totalDays,
+          startDate,
+          dailyQuestions,
+          studentName: student.studentName
+        });
+      }
+    });
+    plan.personalPlans = personalPlans;
+  }
+
+  return plan;
+}
+
+export function adjustClassStudyPlan(config: ClassPlanAdjustmentConfig): ClassStudyPlan {
+  const { plan, latestRecords, completedDay } = config;
+
+  const newBaseRecords = [...plan.baseRecords];
+  latestRecords.forEach(latest => {
+    const existingIdx = newBaseRecords.findIndex(r => r.studentId === latest.studentId);
+    if (existingIdx >= 0) {
+      newBaseRecords[existingIdx] = latest;
+    } else {
+      newBaseRecords.push(latest);
+    }
+  });
+
+  const classConfig: ClassDiagnosticConfig = {
+    records: newBaseRecords,
+    className: plan.className
+  };
+
+  const updatedClassReport = generateClassDiagnosticReport(classConfig);
+  const newAnalysis = analyzeClassRecords(newBaseRecords);
+
+  const classAnalysis = {
+    ...newAnalysis,
+    classWeakPoints: updatedClassReport.knowledgePointDimension.classWeakPoints.map(kp => ({ kp, accuracy: updatedClassReport.knowledgePointDimension.stats[kp.id]?.avgAccuracy || 0 })),
+    classStrongPoints: updatedClassReport.knowledgePointDimension.classStrongPoints.map(kp => ({ kp, accuracy: updatedClassReport.knowledgePointDimension.stats[kp.id]?.avgAccuracy || 0 })),
+    avgMastery: updatedClassReport.overall.avgMasteryLevel,
+    overallAccuracy: updatedClassReport.overall.avgAccuracy
+  };
+
+  const remainingDays = plan.totalDays - completedDay;
+  const adjustedDays = [...plan.days];
+
+  for (let i = completedDay; i < plan.totalDays; i++) {
+    const originalDay = adjustedDays[i];
+    const newDayNumber = i - completedDay + 1;
+    const newDay = generateClassDailyPlan(
+      newDayNumber,
+      classAnalysis,
+      remainingDays,
+      originalDay.totalQuestions,
+      originalDay.date
+    );
+
+    adjustedDays[i] = {
+      ...originalDay,
+      knowledgePoints: newDay.knowledgePoints,
+      typeRatio: newDay.typeRatio,
+      dailyGoal: newDay.dailyGoal,
+      focusAreas: newDay.focusAreas,
+      estimatedTime: newDay.estimatedTime
+    };
+  }
+
+  adjustedDays[completedDay - 1] = {
+    ...adjustedDays[completedDay - 1],
+    completed: true
+  };
+
+  const adjustmentReason = `完成第${completedDay}天班级练习后，结合${latestRecords.length}位学生的最新表现调整后续计划。`;
+  let changes = '';
+
+  if (updatedClassReport.overall.avgAccuracy >= 0.8) {
+    changes = '班级整体表现优秀，提升后续练习难度';
+  } else if (updatedClassReport.overall.avgAccuracy < 0.6) {
+    changes = '班级整体需要加强基础，降低后续练习难度，增加薄弱知识点练习量';
+  } else {
+    changes = '班级表现稳定，保持当前进度，继续巩固薄弱点';
+  }
+
+  if (updatedClassReport.knowledgePointDimension.classWeakPoints.length > 0) {
+    const weakNames = updatedClassReport.knowledgePointDimension.classWeakPoints
+      .slice(0, 2)
+      .map(w => w.name)
+      .join('、');
+    changes += `，全班重点加强「${weakNames}」`;
+  }
+
+  const updatedPersonalPlans = plan.personalPlans ? { ...plan.personalPlans } : undefined;
+  if (updatedPersonalPlans) {
+    latestRecords.forEach(latest => {
+      if (updatedPersonalPlans[latest.studentId]) {
+        updatedPersonalPlans[latest.studentId] = adjustStudyPlan({
+          plan: updatedPersonalPlans[latest.studentId],
+          latestRecord: latest.record,
+          completedDay
+        });
+      }
+    });
+  }
+
+  return {
+    ...plan,
+    classWeakPoints: updatedClassReport.knowledgePointDimension.classWeakPoints,
+    classStrongPoints: updatedClassReport.knowledgePointDimension.classStrongPoints,
+    days: adjustedDays,
+    baseRecords: newBaseRecords,
+    personalPlans: updatedPersonalPlans,
+    adjustmentHistory: [
+      ...plan.adjustmentHistory,
+      {
+        date: Date.now(),
+        day: completedDay,
+        reason: adjustmentReason,
+        changes
+      }
+    ]
+  };
+}
+
 export const planModule = {
   create: createStudyPlan,
-  adjust: adjustStudyPlan
+  adjust: adjustStudyPlan,
+  createClass: createClassStudyPlan,
+  adjustClass: adjustClassStudyPlan
 };
