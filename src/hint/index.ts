@@ -120,7 +120,7 @@ const errorTypeHints: { [key in ErrorType]?: Hint[] } = {
       content: '审题是解题的第一步，多读两遍题目总是有帮助的。'
     }
   ],
-  unknown: [
+  unknownError: [
     {
       level: 1,
       type: 'general',

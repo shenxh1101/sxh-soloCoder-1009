@@ -70,7 +70,7 @@ function detectErrorType(
     return 'calculationError';
   }
 
-  return 'unknown';
+  return 'unknownError';
 }
 
 function calculateStepScores(

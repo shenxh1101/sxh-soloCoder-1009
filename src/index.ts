@@ -4,13 +4,15 @@ import { renderModule } from './render';
 import { gradingModule } from './grading';
 import { hintModule } from './hint';
 import { recordModule } from './record';
+import { planModule } from './plan';
 
 export * from './types';
 export { createQuestions, createMixedQuestions, createAdaptiveQuestions } from './question';
 export { renderQuestion, renderQuestionPlain } from './render';
 export { gradingModule } from './grading';
 export { hintModule } from './hint';
-export { recordModule, createExercise, getRecommendation } from './record';
+export { recordModule, createExercise, getRecommendation, generateDiagnosticReport } from './record';
+export { planModule, createStudyPlan, adjustStudyPlan } from './plan';
 export { createSeededRandom } from './utils/random';
 export {
   gcd,
@@ -35,7 +37,8 @@ export const mathExerciseSDK: MathExerciseSDK = {
   render: renderModule,
   grading: gradingModule,
   hint: hintModule,
-  record: recordModule
+  record: recordModule,
+  plan: planModule
 };
 
 export default mathExerciseSDK;

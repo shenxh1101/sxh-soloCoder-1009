@@ -100,10 +100,12 @@ export type ErrorType =
   | 'unitError'
   | 'signError'
   | 'fractionNotSimplified'
+  | 'wrongFractionReduction'
   | 'wrongOperation'
+  | 'wrongFormula'
   | 'missingStep'
   | 'misreadQuestion'
-  | 'unknown';
+  | 'unknownError';
 
 export interface HintRequest {
   question: Question;
@@ -123,6 +125,7 @@ export interface AnswerAttempt {
   errorType?: ErrorType;
   timeSpent: number;
   timestamp: number;
+  hintUsed?: boolean;
 }
 
 export interface AnswerRecord {
@@ -180,15 +183,15 @@ export interface ExerciseRecord {
   errorStats: {
     [key in ErrorType]?: number;
   };
-  knowledgePointStats: {
-    [knowledgePointId: string]: KnowledgePointStat;
-  };
+  knowledgePointStats: KnowledgePointStat[];
   typeStats: {
     [type in QuestionType]?: {
       correct: number;
       total: number;
       accuracy: number;
       mastery: number;
+      avgTime: number;
+      avgAttempts: number;
     };
   };
 }
@@ -223,16 +226,14 @@ export interface AdaptiveConfig {
   preferredTypes?: QuestionType[];
   maxDifficulty?: Difficulty;
   minDifficulty?: Difficulty;
+  seed?: number;
 }
 
 export interface MathExerciseSDK {
   question: {
     create(config: QuestionConfig): Question[];
     createMixed(config: MixedExerciseConfig): Question[];
-    createAdaptive(config: AdaptiveConfig): {
-      questions: Question[];
-      recommendation: AdaptiveRecommendation;
-    };
+    createAdaptive(config: AdaptiveConfig): AdaptiveQuestionWithReason;
   };
   render: {
     render(question: Question, platform?: 'web' | 'mobile'): RenderResult;
@@ -256,5 +257,173 @@ export interface MathExerciseSDK {
       getMasteryLevel(): number;
     };
     getRecommendation(previousRecord: ExerciseRecord): AdaptiveRecommendation;
+    generateDiagnosticReport(record: ExerciseRecord, questions?: Question[]): DiagnosticReport;
   };
+  plan: {
+    create(config: StudyPlanConfig): StudyPlan;
+    adjust(config: PlanAdjustmentConfig): StudyPlan;
+  };
+}
+
+export type AnswerCategory =
+  | 'firstTimeCorrect'
+  | 'improvedAfterHint'
+  | 'correctAfterAttempts'
+  | 'stillWrong';
+
+export type QuestionSelectionReason =
+  | 'weakKnowledgePoint'
+  | 'weakQuestionType'
+  | 'commonMistake'
+  | 'review'
+  | 'challenge'
+  | 'balanced';
+
+export interface QuestionWithReason extends Question {
+  selectionReason: QuestionSelectionReason;
+  selectionExplanation: string;
+}
+
+export interface DiagnosticReport {
+  exerciseId: string;
+  exerciseDate: number;
+  overall: {
+    totalQuestions: number;
+    correctCount: number;
+    accuracy: number;
+    masteryLevel: number;
+    firstAttemptAccuracy: number;
+    improvementRate: number;
+    avgTimePerQuestion: number;
+    avgAttemptsPerQuestion: number;
+  };
+  personalDimension: {
+    categoryStats: {
+      [key in AnswerCategory]: {
+        count: number;
+        percentage: number;
+        questions: string[];
+      };
+    };
+    performanceTrend: 'improving' | 'stable' | 'declining';
+  };
+  typeDimension: {
+    stats: {
+      [type in QuestionType]?: {
+        total: number;
+        correct: number;
+        accuracy: number;
+        mastery: number;
+        avgTime: number;
+        avgAttempts: number;
+      };
+    };
+    strongTypes: QuestionType[];
+    weakTypes: QuestionType[];
+  };
+  knowledgePointDimension: {
+    stats: {
+      [kpId: string]: KnowledgePointStat & {
+        categoryBreakdown: { [key in AnswerCategory]: number };
+      };
+    };
+    strongPoints: KnowledgePoint[];
+    weakPoints: KnowledgePoint[];
+    priorityReview: KnowledgePoint[];
+  };
+  questionDimension: {
+    details: {
+      [questionId: string]: {
+        question: string;
+        type: QuestionType;
+        difficulty: Difficulty;
+        knowledgePoint?: KnowledgePoint;
+        isCorrect: boolean;
+        firstAttemptCorrect: boolean;
+        attempts: number;
+        totalTime: number;
+        errorType?: ErrorType;
+        improvement: 'improved' | 'noChange' | 'regressed';
+        category: AnswerCategory;
+      };
+    };
+    hardestQuestions: string[];
+    mostTimeConsuming: string[];
+  };
+  teacherComments: {
+    shortComment: string;
+    detailedComment: string;
+    highlights: string[];
+    concerns: string[];
+    suggestions: string[];
+    encouragement: string;
+  };
+}
+
+export interface AdaptiveQuestionWithReason {
+  questions: QuestionWithReason[];
+  recommendation: AdaptiveRecommendation & {
+    questionBreakdown: {
+      weakKnowledgePoint: number;
+      weakType: number;
+      commonMistake: number;
+      review: number;
+      challenge: number;
+    };
+  };
+}
+
+export interface StudyPlanDay {
+  day: number;
+  date?: number;
+  totalQuestions: number;
+  estimatedTime: number;
+  typeRatio: { [key in QuestionType]?: number };
+  knowledgePoints: {
+    knowledgePoint: KnowledgePoint;
+    count: number;
+    difficulty: Difficulty;
+    purpose: 'review' | 'strengthen' | 'preview';
+  }[];
+  dailyGoal: string;
+  focusAreas: string[];
+  completed: boolean;
+  actualRecord?: ExerciseRecord;
+}
+
+export interface StudyPlan {
+  planId: string;
+  createdAt: number;
+  totalDays: number;
+  startDate: number;
+  studentName?: string;
+  totalQuestions: number;
+  totalEstimatedTime: number;
+  overallGoal: string;
+  days: StudyPlanDay[];
+  baseRecords: ExerciseRecord[];
+  adjustmentHistory: {
+    date: number;
+    day: number;
+    reason: string;
+    changes: string;
+  }[];
+}
+
+export interface StudyPlanConfig {
+  baseRecords: ExerciseRecord[];
+  totalDays: 7 | 14;
+  startDate?: number;
+  dailyQuestions?: number;
+  preferredTypes?: QuestionType[];
+  maxDifficulty?: Difficulty;
+  minDifficulty?: Difficulty;
+  studentName?: string;
+  focusKnowledgePoints?: KnowledgePoint[];
+}
+
+export interface PlanAdjustmentConfig {
+  plan: StudyPlan;
+  latestRecord: ExerciseRecord;
+  completedDay: number;
 }
