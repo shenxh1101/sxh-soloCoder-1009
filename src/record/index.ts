@@ -80,7 +80,8 @@ function generateReviewSuggestions(
 function analyzeQuestionProgress(
   questionId: string,
   attempts: AnswerAttempt[],
-  questionMap: { [id: string]: Question }
+  questionMap: { [id: string]: Question },
+  answerRecord?: AnswerRecord
 ): QuestionProgress {
   const question = questionMap[questionId];
   const firstAttempt = attempts[0];
@@ -101,9 +102,9 @@ function analyzeQuestionProgress(
 
   return {
     questionId,
-    type: question?.type || 'arithmetic',
-    difficulty: question?.difficulty || 'medium',
-    knowledgePoint: question?.knowledgePoint,
+    type: answerRecord?.questionType || question?.type || 'arithmetic',
+    difficulty: answerRecord?.questionDifficulty || question?.difficulty || 'medium',
+    knowledgePoint: answerRecord?.questionKnowledgePoint || question?.knowledgePoint,
     attempts: [...attempts],
     firstAnswerCorrect,
     finalAnswerCorrect,
@@ -130,9 +131,8 @@ function calculateKnowledgePointStats(
 
   answers.forEach(answer => {
     const question = questionMap[answer.questionId];
-    if (!question?.knowledgePoint) return;
-
-    const kp = question.knowledgePoint;
+    const kp = answer.questionKnowledgePoint || question?.knowledgePoint;
+    if (!kp) return;
     if (!kpData[kp.id]) {
       kpData[kp.id] = {
         knowledgePoint: kp,
@@ -189,9 +189,8 @@ function calculateTypeStats(
 
   answers.forEach(answer => {
     const question = questionMap[answer.questionId];
-    if (!question) return;
-
-    const type = question.type;
+    const type = answer.questionType || question?.type;
+    if (!type) return;
     if (!typeData[type]) {
       typeData[type] = { correct: 0, total: 0, totalTime: 0, totalAttempts: 0 };
     }
@@ -357,7 +356,7 @@ export function createExercise(questions?: Question[]) {
     const questionProgress: QuestionProgress[] = [];
     finalAnswers.forEach(answer => {
       const attempts = answer.attempts || [];
-      questionProgress.push(analyzeQuestionProgress(answer.questionId, attempts, questionMap));
+      questionProgress.push(analyzeQuestionProgress(answer.questionId, attempts, questionMap, answer));
     });
 
     const knowledgePointStats = calculateKnowledgePointStats(finalAnswers, questionMap);

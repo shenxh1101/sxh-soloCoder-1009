@@ -273,6 +273,10 @@ export interface MathExerciseSDK {
   };
   remedial: {
     create(config: RemedialPackageConfig): RemedialPackage;
+    trackProgress(config: RemedialTrackingConfig): RemedialTrackingResult;
+  };
+  teachingResearch: {
+    export(config: TeachingResearchExportConfig): TeachingResearchExport;
   };
 }
 
@@ -597,6 +601,11 @@ export interface ClassStudyPlanConfig {
   dailyQuestions?: number;
   className?: string;
   includePersonalPlans?: boolean;
+  studentRecords?: {
+    studentId: string;
+    studentName?: string;
+    record: ExerciseRecord;
+  }[];
 }
 
 export interface ClassPlanAdjustmentConfig {
@@ -607,4 +616,192 @@ export interface ClassPlanAdjustmentConfig {
     record: ExerciseRecord;
   }[];
   completedDay: number;
+}
+
+export interface RemedialGroupProgress {
+  groupName: '基础组' | '巩固组' | '挑战组';
+  totalStudents: number;
+  completedStudents: number;
+  avgAccuracy: number;
+  avgMastery: number;
+  avgTimeSpent: number;
+  passRate: number;
+  targetAccuracy: number;
+  isTargetReached: boolean;
+  studentProgress: {
+    studentId: string;
+    studentName?: string;
+    record: ExerciseRecord;
+    accuracy: number;
+    mastery: number;
+    isPassed: boolean;
+    canUpgrade: boolean;
+    needsRemediation: boolean;
+  }[];
+}
+
+export interface RemedialComparison {
+  beforeAccuracy: number;
+  afterAccuracy: number;
+  accuracyImprovement: number;
+  beforeMastery: number;
+  afterMastery: number;
+  masteryImprovement: number;
+  improvedStudents: number;
+  stableStudents: number;
+  declinedStudents: number;
+  totalStudents: number;
+}
+
+export interface RemedialTrackingResult {
+  packageId: string;
+  trackedAt: number;
+  className?: string;
+  groupProgress: RemedialGroupProgress[];
+  comparison: RemedialComparison;
+  upgradeRecommendations: {
+    studentId: string;
+    studentName?: string;
+    fromGroup: '基础组' | '巩固组';
+    toGroup: '巩固组' | '挑战组';
+    reason: string;
+  }[];
+  remediationRecommendations: {
+    studentId: string;
+    studentName?: string;
+    currentGroup: '基础组' | '巩固组' | '挑战组';
+    reason: string;
+    suggestedAction: string;
+  }[];
+  summary: string;
+}
+
+export interface RemedialTrackingConfig {
+  package: RemedialPackage;
+  studentRecords: {
+    studentId: string;
+    studentName?: string;
+    groupName: '基础组' | '巩固组' | '挑战组';
+    record: ExerciseRecord;
+    beforeRecord?: ExerciseRecord;
+  }[];
+  passThreshold?: number;
+  upgradeThreshold?: number;
+}
+
+export interface TeachingResearchExport {
+  exportId: string;
+  exportedAt: number;
+  className?: string;
+  exerciseId?: string;
+  textSummary: string;
+  structuredData: {
+    classOverview: {
+      totalStudents: number;
+      submittedCount: number;
+      avgAccuracy: number;
+      avgMastery: number;
+      masteryDistribution: {
+        excellent: number;
+        good: number;
+        medium: number;
+        needsImprovement: number;
+      };
+    };
+    weakKnowledgePoints: Array<{
+      knowledgePoint: KnowledgePoint;
+      avgAccuracy: number;
+      weakStudentCount: number;
+      priority: 'high' | 'medium' | 'low';
+      suggestion: string;
+    }>;
+    strongKnowledgePoints: Array<{
+      knowledgePoint: KnowledgePoint;
+      avgAccuracy: number;
+      suggestion: string;
+    }>;
+    typicalWrongQuestions: Array<{
+      questionId: string;
+      question: string;
+      type: QuestionType;
+      difficulty: Difficulty;
+      knowledgePoint?: KnowledgePoint;
+      passRate: number;
+      commonErrors: string[];
+      analysis: string;
+    }>;
+    focusStudents: Array<{
+      studentId: string;
+      studentName?: string;
+      status: 'needsAttention' | 'declining' | 'excellent';
+      accuracy: number;
+      mastery: number;
+      reason: string;
+      suggestion: string;
+    }>;
+    remedialSuggestions: {
+      groups: Array<{
+        groupName: string;
+        targetStudents: string;
+        totalQuestions: number;
+        avgDifficulty: string;
+        estimatedTime: number;
+        focusPoints: string[];
+      }>;
+    };
+    followUpPlan: {
+      totalDays: number;
+      overallGoal: string;
+      dailyFocus: string[];
+    };
+  };
+  visualizationData: {
+    masteryDistribution: {
+      labels: string[];
+      values: number[];
+      colors: string[];
+    };
+    knowledgePointRanking: {
+      labels: string[];
+      accuracies: number[];
+      colors: string[];
+    };
+    questionPassRate: {
+      labels: string[];
+      passRates: number[];
+    };
+    studentRanking: {
+      labels: string[];
+      accuracies: number[];
+      masteryLevels: number[];
+    };
+  };
+  teachingSuggestions: string[];
+  nextSteps: string[];
+}
+
+export interface TeachingResearchExportConfig {
+  classReport: ClassDiagnosticReport;
+  remedialPackage?: RemedialPackage;
+  followUpPlan?: ClassStudyPlan;
+  includeVisualization?: boolean;
+  className?: string;
+}
+
+export interface AdaptiveBoundaryConfig {
+  allowedKnowledgePoints?: KnowledgePoint[];
+  excludedTypes?: QuestionType[];
+  maxEstimatedTime?: number;
+  classFocusPoints?: KnowledgePoint[];
+  classFocusWeight?: number;
+}
+
+export interface AdaptiveConfig {
+  previousRecord: ExerciseRecord;
+  targetCount?: number;
+  preferredTypes?: QuestionType[];
+  maxDifficulty?: Difficulty;
+  minDifficulty?: Difficulty;
+  seed?: number;
+  boundary?: AdaptiveBoundaryConfig;
 }

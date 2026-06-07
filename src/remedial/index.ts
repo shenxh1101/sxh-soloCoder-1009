@@ -5,7 +5,12 @@ import type {
   QuestionType,
   Difficulty,
   KnowledgePoint,
-  QuestionWithReason
+  QuestionWithReason,
+  RemedialTrackingConfig,
+  RemedialTrackingResult,
+  RemedialGroupProgress,
+  RemedialComparison,
+  ExerciseRecord
 } from '../types';
 import { createQuestions } from '../question';
 import { getTypeForKnowledgePoint } from '../adaptive';
@@ -213,6 +218,207 @@ export function createRemedialPackage(config: RemedialPackageConfig): RemedialPa
   };
 }
 
+function calculateGroupProgress(
+  groupName: '基础组' | '巩固组' | '挑战组',
+  groupStudents: RemedialTrackingConfig['studentRecords'],
+  passThreshold: number,
+  upgradeThreshold: number
+): RemedialGroupProgress {
+  const totalStudents = groupStudents.length;
+  const completedStudents = groupStudents.filter(s => s.record.answers.length > 0).length;
+
+  let totalAccuracy = 0;
+  let totalMastery = 0;
+  let totalTime = 0;
+  let passedCount = 0;
+
+  const studentProgress: RemedialGroupProgress['studentProgress'] = groupStudents.map(student => {
+    const accuracy = student.record.overallAccuracy;
+    const mastery = student.record.masteryLevel;
+    const isPassed = accuracy >= passThreshold;
+    const canUpgrade = groupName !== '挑战组' && accuracy >= upgradeThreshold;
+    const needsRemediation = accuracy < passThreshold * 0.8;
+
+    totalAccuracy += accuracy;
+    totalMastery += mastery;
+    totalTime += student.record.totalTimeSpent;
+    if (isPassed) passedCount++;
+
+    return {
+      studentId: student.studentId,
+      studentName: student.studentName,
+      record: student.record,
+      accuracy,
+      mastery,
+      isPassed,
+      canUpgrade,
+      needsRemediation
+    };
+  });
+
+  const targetAccuracy = groupName === '基础组' ? 0.6 : groupName === '巩固组' ? 0.7 : 0.8;
+  const avgAccuracy = completedStudents > 0 ? totalAccuracy / completedStudents : 0;
+  const avgMastery = completedStudents > 0 ? totalMastery / completedStudents : 0;
+  const avgTimeSpent = completedStudents > 0 ? totalTime / completedStudents : 0;
+  const passRate = completedStudents > 0 ? passedCount / completedStudents : 0;
+  const isTargetReached = avgAccuracy >= targetAccuracy;
+
+  return {
+    groupName,
+    totalStudents,
+    completedStudents,
+    avgAccuracy,
+    avgMastery,
+    avgTimeSpent,
+    passRate,
+    targetAccuracy,
+    isTargetReached,
+    studentProgress
+  };
+}
+
+function calculateComparison(
+  studentRecords: RemedialTrackingConfig['studentRecords']
+): RemedialComparison {
+  let beforeTotalAccuracy = 0;
+  let afterTotalAccuracy = 0;
+  let beforeTotalMastery = 0;
+  let afterTotalMastery = 0;
+  let improvedCount = 0;
+  let stableCount = 0;
+  let declinedCount = 0;
+  let validCount = 0;
+
+  studentRecords.forEach(student => {
+    if (student.beforeRecord && student.record.answers.length > 0) {
+      validCount++;
+      const beforeAcc = student.beforeRecord.overallAccuracy;
+      const afterAcc = student.record.overallAccuracy;
+      const beforeMastery = student.beforeRecord.masteryLevel;
+      const afterMastery = student.record.masteryLevel;
+
+      beforeTotalAccuracy += beforeAcc;
+      afterTotalAccuracy += afterAcc;
+      beforeTotalMastery += beforeMastery;
+      afterTotalMastery += afterMastery;
+
+      if (afterAcc > beforeAcc + 0.05) {
+        improvedCount++;
+      } else if (afterAcc < beforeAcc - 0.05) {
+        declinedCount++;
+      } else {
+        stableCount++;
+      }
+    }
+  });
+
+  const totalStudents = validCount;
+  const beforeAccuracy = validCount > 0 ? beforeTotalAccuracy / validCount : 0;
+  const afterAccuracy = validCount > 0 ? afterTotalAccuracy / validCount : 0;
+  const beforeMastery = validCount > 0 ? beforeTotalMastery / validCount : 0;
+  const afterMastery = validCount > 0 ? afterTotalMastery / validCount : 0;
+
+  return {
+    beforeAccuracy,
+    afterAccuracy,
+    accuracyImprovement: afterAccuracy - beforeAccuracy,
+    beforeMastery,
+    afterMastery,
+    masteryImprovement: afterMastery - beforeMastery,
+    improvedStudents: improvedCount,
+    stableStudents: stableCount,
+    declinedStudents: declinedCount,
+    totalStudents
+  };
+}
+
+export function trackRemedialProgress(config: RemedialTrackingConfig): RemedialTrackingResult {
+  const { package: remedialPackage, studentRecords, passThreshold = 0.6, upgradeThreshold = 0.8 } = config;
+
+  const groupMap: { [key in '基础组' | '巩固组' | '挑战组']: typeof studentRecords } = {
+    '基础组': [],
+    '巩固组': [],
+    '挑战组': []
+  };
+
+  studentRecords.forEach(sr => {
+    if (groupMap[sr.groupName]) {
+      groupMap[sr.groupName].push(sr);
+    }
+  });
+
+  const groupProgress: RemedialGroupProgress[] = [
+    calculateGroupProgress('基础组', groupMap['基础组'], passThreshold, upgradeThreshold),
+    calculateGroupProgress('巩固组', groupMap['巩固组'], passThreshold, upgradeThreshold),
+    calculateGroupProgress('挑战组', groupMap['挑战组'], passThreshold, upgradeThreshold)
+  ];
+
+  const comparison = calculateComparison(studentRecords);
+
+  const upgradeRecommendations: RemedialTrackingResult['upgradeRecommendations'] = [];
+  const remediationRecommendations: RemedialTrackingResult['remediationRecommendations'] = [];
+
+  groupProgress.forEach(group => {
+    group.studentProgress.forEach(sp => {
+      if (sp.canUpgrade && group.groupName !== '挑战组') {
+        const toGroup = group.groupName === '基础组' ? '巩固组' : '挑战组';
+        upgradeRecommendations.push({
+          studentId: sp.studentId,
+          studentName: sp.studentName,
+          fromGroup: group.groupName,
+          toGroup,
+          reason: `正确率达到${(sp.accuracy * 100).toFixed(0)}%，超过升组门槛${(upgradeThreshold * 100).toFixed(0)}%，建议升入${toGroup}`
+        });
+      }
+
+      if (sp.needsRemediation) {
+        remediationRecommendations.push({
+          studentId: sp.studentId,
+          studentName: sp.studentName,
+          currentGroup: group.groupName,
+          reason: `正确率仅${(sp.accuracy * 100).toFixed(0)}%，低于达标线${(passThreshold * 100).toFixed(0)}%，需要加强补习`,
+          suggestedAction: group.groupName === '基础组'
+            ? '建议继续在基础组补习，重点关注基础概念，每天增加10-15分钟练习时间'
+            : group.groupName === '巩固组'
+            ? '建议降回基础组重新夯实基础，或安排一对一辅导'
+            : '建议降回巩固组，巩固基础知识点'
+        });
+      }
+    });
+  });
+
+  const totalStudents = studentRecords.length;
+  const totalCompleted = groupProgress.reduce((sum, g) => sum + g.completedStudents, 0);
+  const totalPassed = groupProgress.reduce((sum, g) => sum + g.studentProgress.filter(sp => sp.isPassed).length, 0);
+
+  let summary = `本次补救练习共${totalStudents}人参与，${totalCompleted}人完成，${totalPassed}人达标（正确率≥${(passThreshold * 100).toFixed(0)}%）。`;
+  
+  if (comparison.totalStudents > 0) {
+    summary += `与补救前相比，班级平均正确率从${(comparison.beforeAccuracy * 100).toFixed(1)}%提升到${(comparison.afterAccuracy * 100).toFixed(1)}%，`;
+    summary += `提升了${(comparison.accuracyImprovement * 100).toFixed(1)}个百分点。`;
+    summary += `${comparison.improvedStudents}人明显进步，${comparison.stableStudents}人保持稳定，${comparison.declinedStudents}人有所下滑。`;
+  }
+
+  if (upgradeRecommendations.length > 0) {
+    summary += `${upgradeRecommendations.length}名学生建议升组。`;
+  }
+  if (remediationRecommendations.length > 0) {
+    summary += `${remediationRecommendations.length}名学生需要继续加强补习。`;
+  }
+
+  return {
+    packageId: remedialPackage.packageId,
+    trackedAt: Date.now(),
+    className: remedialPackage.className,
+    groupProgress,
+    comparison,
+    upgradeRecommendations,
+    remediationRecommendations,
+    summary
+  };
+}
+
 export const remedialModule = {
-  createRemedialPackage
+  createRemedialPackage,
+  trackProgress: trackRemedialProgress
 };

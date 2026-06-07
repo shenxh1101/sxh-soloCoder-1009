@@ -652,15 +652,19 @@ function getTypeForKnowledgePoint(kp: KnowledgePoint): QuestionType {
 }
 
 export function createClassStudyPlan(config: ClassStudyPlanConfig): ClassStudyPlan {
-  const { classReport, totalDays, startDate = Date.now(), dailyQuestions = 10, className, includePersonalPlans = false } = config;
+  const { classReport, totalDays, startDate = Date.now(), dailyQuestions = 10, className, includePersonalPlans = false, studentRecords } = config;
 
-  const baseRecords = classReport.studentDimension.ranking
-    .map(r => ({
-      studentId: r.studentId,
-      studentName: r.studentName,
-      record: (r as unknown as { record?: ExerciseRecord }).record || {} as ExerciseRecord
-    }))
-    .filter(r => r.record && r.record.knowledgePointStats);
+  let baseRecords = studentRecords || [];
+  
+  if (baseRecords.length === 0) {
+    baseRecords = classReport.studentDimension.ranking
+      .map(r => ({
+        studentId: r.studentId,
+        studentName: r.studentName,
+        record: (r as unknown as { record?: ExerciseRecord }).record || {} as ExerciseRecord
+      }))
+      .filter(r => r.record && r.record.knowledgePointStats);
+  }
 
   const analysis = analyzeClassRecords(baseRecords);
 
@@ -705,15 +709,10 @@ export function createClassStudyPlan(config: ClassStudyPlanConfig): ClassStudyPl
 
   if (includePersonalPlans) {
     const personalPlans: { [studentId: string]: StudyPlan } = {};
-    classReport.studentDimension.ranking.slice(0, 10).forEach(student => {
-      const studentRecords = classReport.studentDimension.ranking
-        .filter(r => r.studentId === student.studentId)
-        .map(r => r as unknown as ExerciseRecord)
-        .filter(r => r.knowledgePointStats);
-
-      if (studentRecords.length > 0) {
+    baseRecords.forEach(student => {
+      if (student.record && student.record.knowledgePointStats) {
         personalPlans[student.studentId] = createStudyPlan({
-          baseRecords: studentRecords,
+          baseRecords: [student.record],
           totalDays,
           startDate,
           dailyQuestions,
